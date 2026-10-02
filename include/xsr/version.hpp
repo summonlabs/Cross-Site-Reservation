@@ -9,7 +9,7 @@ namespace xsr {
 inline constexpr int version_major = 1;
 inline constexpr int version_minor = 0;
 inline constexpr int version_patch = 0;
-inline constexpr const char* version_string = "1.0.0";
+inline constexpr const char* version_string = "1.0.1";
 
 /// Wire protocol version. Bumped only on incompatible message changes.
 inline constexpr std::uint32_t protocol_version = 1;

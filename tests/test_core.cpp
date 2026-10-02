@@ -323,7 +323,7 @@ XSR_TEST(error, codes_round_trip_through_text) {
 }
 
 XSR_TEST(version, identifiers_are_consistent) {
-  XSR_CHECK_EQ(std::string(version_string), std::string("1.0.0"));
+  XSR_CHECK_EQ(std::string(version_string), std::string("1.0.1"));
   XSR_CHECK_EQ(version_major, 1);
   XSR_CHECK_EQ(protocol_version, 1u);
   XSR_CHECK_EQ(store_format_version, 1u);

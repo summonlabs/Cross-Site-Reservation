@@ -50,10 +50,6 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DXSR_WARNINGS_AS_ERRORS=ON -DXSR_BUILD_BENCHMARKS=ON
       - name: Build
         run: cmake --build build --parallel
-      - name: TEMP diagnostics (list every compile error)
-        if: always()
-        run: |
-          cmake --build build -- -k 2>&1 | grep -E "error:" | sort -u | head -100 || true
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
@@ -74,10 +70,6 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DXSR_WARNINGS_AS_ERRORS=ON
       - name: Build
         run: cmake --build build --parallel
-      - name: TEMP diagnostics (list every compile error)
-        if: always()
-        run: |
-          cmake --build build -- -k 2>&1 | grep -E "error:" | sort -u | head -100 || true
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
@@ -96,10 +88,6 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DXSR_ENABLE_SANITIZERS=ON -DXSR_WARNINGS_AS_ERRORS=ON
       - name: Build
         run: cmake --build build --parallel
-      - name: TEMP diagnostics (list every compile error)
-        if: always()
-        run: |
-          cmake --build build -- -k 2>&1 | grep -E "error:" | sort -u | head -100 || true
 
       - name: Test
         run: ctest --test-dir build --output-on-failure

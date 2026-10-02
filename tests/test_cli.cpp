@@ -31,7 +31,7 @@ XSR_TEST(cli, version_usage_and_unknown_commands) {
   auto cluster = XSR_TAKE(Cluster::create("cli-version"));
   const auto version = run_binary("xsr", {"version"}, cluster.root());
   XSR_CHECK_EQ(version.exit_code, 0);
-  XSR_CHECK_MSG(contains(version.out, "1.0.0"), "version output: " + version.out);
+  XSR_CHECK_MSG(contains(version.out, "1.0.1"), "version output: " + version.out);
 
   const auto usage = run_binary("xsr", {}, cluster.root());
   XSR_CHECK_EQ(usage.exit_code, 2);

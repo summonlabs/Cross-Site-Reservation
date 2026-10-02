@@ -5,7 +5,7 @@ decision into enforceable, generation-bound facility-capacity commitments across
 It answers one question: **how can capacity be committed across independent sites without double
 allocation, partial invisible success, stale authority, or ambiguity after a crash or partition?**
 
-Version 1.0.0. C++20, CMake, no third-party runtime dependencies. Apache License 2.0.
+Version 1.0.1. C++20, CMake, no third-party runtime dependencies. Apache License 2.0.
 
 ## What this boundary owns
 
@@ -310,8 +310,20 @@ configuration on Windows with GCC 14.2/MinGW-w64) and the tenth validates the in
 | `xsr_test_cli` | 3 | CLI version/usage/unknown command, full reserve-status-accounting-release-shutdown flow against live processes, refusal of malformed arguments, dead endpoints, and missing state |
 | `xsr_test_package` | 1 | install to a prefix, configure an independent consumer against that prefix only, build it, run it, require its success output |
 
-Every suite also runs green in the Debug configuration. There are no test timeouts, watchdogs, or
-process-kill-as-pass behaviours anywhere in the project: a hanging test is a defect.
+Every suite also runs green in the Debug configuration. The same ten targets run green on every
+platform in the CI matrix below. There are no test timeouts, watchdogs, or process-kill-as-pass
+behaviours anywhere in the project: a hanging test is a defect.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs seven jobs on hosted runners, and no step sets a timeout, a watchdog,
+or a kill-on-hang rule. The jobs are Windows/MSVC Debug and Release, Ubuntu/GCC Debug and Release,
+Ubuntu/Clang Debug and Release, and an Ubuntu/Clang job built with `XSR_ENABLE_SANITIZERS` under
+`ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1:check_initialization_order=1` and
+`UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1`. Each job configures, builds with warnings as
+errors, and runs the whole `ctest` set. The Ubuntu jobs are what exercise the POSIX socket, file, and
+process-control paths, and the sanitizer job is what shows the protocol, recovery, and concurrency
+paths are memory-clean. All seven jobs are green on the commit this release points at.
 
 ### Crash injection
 
@@ -357,10 +369,10 @@ number.
 
 - Windows (MSVC 19.x and MinGW-w64 GCC) and Linux (GCC, Clang) are supported targets; sockets, file
   primitives, and process control are the only platform-specific code.
-- The 94 tests and the benchmark numbers below were produced on Windows with GCC 14.2 (MinGW-w64) and
-  MSVC 19.x. The POSIX paths (BSD sockets, fsync/ftruncate, fork/exec) are implemented and are exercised
-  by the CI matrix, but they were not executed in the environment where this release was validated, so
-  they are untested here.
+- Windows was validated directly with GCC 14.2 (MinGW-w64) and MSVC 19.x, Debug and Release. The POSIX
+  paths (BSD sockets, fsync/ftruncate, fork/exec) are implemented and are executed by the Ubuntu jobs in
+  CI, in both Debug and Release and again under AddressSanitizer and UndefinedBehaviorSanitizer, rather
+  than on a development machine of this project.
 - Wiring is plaintext over TCP. There is no authentication or encryption: deploy the coordinator and
   its participants on a trusted network or loopback. This is a deliberate scope decision, not an
   unfinished feature.
@@ -369,12 +381,12 @@ number.
 - The coordinator is one logical writer. It is not a consensus group; running two coordinators
   against one state directory is not supported and is detected through the persisted coordinator
   identity.
-- `xsr_test_package` validates package consumption on the host it runs on; Linux package consumption
-  is exercised by the CI matrix rather than by a Windows run.
-- No sanitizer build was executed for this release. The configuration exists and is wired into the
-  CI matrix (`XSR_ENABLE_SANITIZERS` adds `-fsanitize=address,undefined` on GCC/Clang and
-  `/fsanitize=address` on MSVC), but MinGW GCC and MSVC on this host do not provide a working
-  ASan/UBSan combination, so the sanitizer jobs are declared but unrun evidence.
+- `xsr_test_package` validates package consumption on every platform the matrix covers: it installs to
+  a prefix, configures an independent consumer project against that prefix alone, builds it, and runs
+  it. Under the sanitizer job the installed package also carries the sanitizer flags, so a downstream
+  consumer links the same runtime.
+- Sanitizer coverage is AddressSanitizer plus UndefinedBehaviorSanitizer with leak detection on
+  Clang/Linux. The MSVC `/fsanitize=address` configuration exists but is not exercised by the matrix.
 - Large-file behaviour beyond the configured bounds is refused rather than tested at scale: the log
   is capped at 512 MiB, snapshots at 16 MiB, and record payloads at 1 MiB.
 - Static analysis, external fuzzing, and long-duration soak testing were not run.
