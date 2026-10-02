@@ -92,7 +92,10 @@ XSR_TEST(cli, reserve_status_release_and_accounting_flow) {
   XSR_CHECK_EQ(shutdown.exit_code, 0);
   XSR_CHECK(contains(shutdown.out, "shutdown=ok"));
   XSR_CHECK_MSG(cluster.wait_until_stopped("coordinator"), "the coordinator ignored the shutdown request");
-  XSR_CHECK_EQ(cluster.exit_code_of("coordinator"), 0);
+  // The log is part of the message: a runtime diagnostic lands there, so a
+  // non-zero exit has to explain itself rather than just fail an equality.
+  XSR_CHECK_MSG(cluster.exit_code_of("coordinator") == 0,
+                "the coordinator did not exit cleanly: " + cluster.stderr_of("coordinator"));
 }
 
 XSR_TEST(cli, invalid_invocations_are_refused) {

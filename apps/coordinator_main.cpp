@@ -1,5 +1,6 @@
 // Copyright 2026 Summon Software Labs. Licensed under the Apache License, Version 2.0.
 // xsr-coordinator: the multi-site reservation coordinator process.
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -45,8 +46,10 @@ void print_usage() {
 }
 
 /// Tracks live client connections so that an orderly shutdown can unblock them.
-/// The socket objects are owned by their connection closures; the registry only
-/// holds observers and is cleared after every worker has been joined.
+/// The socket objects are owned by their connection closures, so a closure must
+/// withdraw its observer when it returns: an observer outliving its socket would
+/// be a dangling pointer by the time shutdown walks the list, because shutdown
+/// runs precisely while closures are still finishing.
 struct ConnectionRegistry {
   std::mutex mutex;
   std::vector<platform::Socket*> sockets;
@@ -56,9 +59,20 @@ struct ConnectionRegistry {
     sockets.push_back(socket);
   }
 
-  void shutdown_all() {
+  /// Withdraws an observer whose closure is returning.
+  void remove(platform::Socket* socket) {
     std::lock_guard<std::mutex> guard(mutex);
-    for (platform::Socket* socket : sockets) {
+    sockets.erase(std::remove(sockets.begin(), sockets.end(), socket), sockets.end());
+  }
+
+  void shutdown_all() {
+    // The shutdown calls happen outside the lock, on a snapshot of the live set.
+    std::vector<platform::Socket*> live;
+    {
+      std::lock_guard<std::mutex> guard(mutex);
+      live = sockets;
+    }
+    for (platform::Socket* socket : live) {
       if (socket != nullptr) socket->shutdown_both();
     }
   }
@@ -442,6 +456,11 @@ int main(int argc, char** argv) {
         serve_site(coordinator, std::move(socket), site_id, deadline_ms);
       } else {
         registry.add(&socket);
+        struct Registration {
+          ConnectionRegistry* registry;
+          platform::Socket* socket;
+          ~Registration() { registry->remove(socket); }
+        } registration{&registry, &socket};
         serve_client(coordinator, socket);
       }
       g_connection_count.fetch_sub(1);
