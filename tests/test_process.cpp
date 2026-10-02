@@ -54,6 +54,15 @@ ReservationId reservation_from_context(const std::string& context) {
   return XSR_TAKE(ReservationId::from_hex(hex));
 }
 
+/// Renders an accounting report so a failure says what did not close.
+std::string accounting_summary(const AccountingReport& report) {
+  return "sites=" + std::to_string(report.sites.size()) +
+         " committed=" + report.committed.to_string() + " held=" + report.held.to_string() +
+         " free=" + report.free.to_string() +
+         " active=" + std::to_string(report.reservations_active) +
+         " balanced=" + (report.balanced ? "true" : "false");
+}
+
 void check_cluster_accounting(Cluster& cluster) {
   auto client = cluster.checked_client();
   auto report = client.accounting();
@@ -178,10 +187,15 @@ XSR_TEST(process, coordinator_crash_after_the_committing_marker_is_recovered) {
   cluster.start_coordinator({"--fault-point", "coordinator.after-commit.reservation-committing"});
   cluster.start_site("s1", "cpu=64,mem=256");
   cluster.start_site("s2", "cpu=32,mem=128");
-  ReservationId reservation;
   {
+    const auto started = std::chrono::steady_clock::now();
     Client client = cluster.checked_client();
     auto response = client.reserve(cluster_request("proc-4", {{"s1", 1}, {"s2", 1}}, "cpu=4", 600000));
+    note("reserve phase took " +
+         std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - started)
+                            .count()) +
+         " ms");
     // The coordinator dies while persisting the committing marker, so the caller
     // sees a transport failure rather than a fabricated success.
     XSR_CHECK_ERR(response, ErrorCode::unreachable);
@@ -191,22 +205,40 @@ XSR_TEST(process, coordinator_crash_after_the_committing_marker_is_recovered) {
   // No participant may hold a commitment: the commit message was never sent.
   XSR_CHECK(cluster.stderr_of("site:s1").find("commit") == std::string::npos);
 
+  const auto restart_started = std::chrono::steady_clock::now();
   cluster.start_coordinator();
-  cluster.await_registered("s1", 2);
-  cluster.await_registered("s2", 2);
+  note("coordinator restart took " +
+       std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - restart_started)
+                          .count()) +
+       " ms");
+  // The restarted coordinator truncates its diagnostic log, so exactly one
+  // registration per participant is expected.
+  cluster.await_registered("s1", 1);
+  cluster.await_registered("s2", 1);
   {
     Client client = cluster.checked_client();
     auto reconcile = client.reconcile();
     XSR_CHECK_OK(reconcile);
-    // Either the startup recovery already completed the reservation, or this
-    // explicit pass did; both must leave the world determinate.
-    XSR_CHECK(reconcile.value().examined + reconcile.value().completed >= 1);
   }
+  // Whichever pass completed it -- startup recovery or this explicit sweep --
+  // recovery must activate the reservation exactly once: both participants hold
+  // exactly the capacity that was requested, and nothing is left held.
   Client client = cluster.checked_client();
   auto report = client.accounting();
   XSR_CHECK_OK(report);
-  XSR_CHECK_EQ(report.value().balanced, true);
+  XSR_CHECK_MSG(report.value().balanced,
+                accounting_summary(report.value()) + " | log: " + cluster.stderr_of("coordinator"));
   XSR_CHECK_EQ(report.value().committed.to_string(), std::string("cpu=8"));
+  XSR_CHECK_EQ(report.value().reservations_active, std::size_t{1});
+  // A second pass must be safe and must not move the world: the aggregate
+  // accounting evidence stays byte-for-byte identical, so recovery converged.
+  auto converged = client.reconcile();
+  XSR_CHECK_OK(converged);
+  auto settled = client.accounting();
+  XSR_CHECK_OK(settled);
+  XSR_CHECK_EQ(settled.value().digest, report.value().digest);
+  XSR_CHECK_EQ(settled.value().committed.to_string(), std::string("cpu=8"));
   cluster.stop_all();
 }
 

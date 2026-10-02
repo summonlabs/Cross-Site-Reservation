@@ -80,8 +80,19 @@ class Coordinator {
   /// offer generation forward; a lower offer generation is refused.
   Status register_site(const SiteRegistration& registration, ParticipantChannelPtr channel = nullptr);
   Status attach_channel(const SiteId& site_id, ParticipantChannelPtr channel);
+  /// True when the persisted record for (id, generation) still carries exactly
+  /// p stage. A sweep acts on a snapshot taken without the core lock held across
+  /// participant I/O, so every sweep-driven transition is conditional on that
+  /// snapshot still holding: a stale pass must never regress a record that
+  /// another pass already carried to a terminal stage.
+  bool stage_matches_locked(const ReservationId& id, Generation generation,
+                            ReservationStage stage) const;
+
   std::optional<SiteRegistration> site_registration(const SiteId& site_id) const;
   std::vector<SiteRegistration> registered_sites() const;
+  /// Sites that currently have a live participant channel attached. Registrations
+  /// are durable, so this is the only honest answer to "who can answer right now".
+  std::vector<SiteId> attached_sites() const;
 
   /// Runs the full prepare -> authorize -> commit protocol and returns only the
   /// final commit receipt. A repeated call with the same idempotency key and the

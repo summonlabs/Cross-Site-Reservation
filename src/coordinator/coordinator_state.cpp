@@ -462,6 +462,22 @@ std::optional<SiteRegistration> Coordinator::site_registration(const SiteId& sit
   return existing->second.registration;
 }
 
+bool Coordinator::stage_matches_locked(const ReservationId& id, Generation generation,
+                                       ReservationStage stage) const {
+  const auto found = records_.find(ledger_key(id, generation));
+  return found != records_.end() && found->second.stage == stage;
+}
+
+std::vector<SiteId> Coordinator::attached_sites() const {
+  std::lock_guard<std::mutex> guard(core_mutex_);
+  std::vector<SiteId> out;
+  for (const auto& pair : sites_) {
+    if (pair.second.channel != nullptr) out.push_back(pair.second.registration.site_id);
+  }
+  std::sort(out.begin(), out.end(), [](const SiteId& a, const SiteId& b) { return a < b; });
+  return out;
+}
+
 std::vector<SiteRegistration> Coordinator::registered_sites() const {
   std::lock_guard<std::mutex> guard(core_mutex_);
   std::vector<SiteRegistration> out;

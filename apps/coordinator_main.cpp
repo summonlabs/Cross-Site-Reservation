@@ -359,13 +359,17 @@ int main(int argc, char** argv) {
           if (!is_terminal_stage(record.stage)) open_records.push_back(record);
         }
         if (open_records.empty()) return;
-        const std::vector<SiteRegistration> attached = coordinator.registered_sites();
+        // Registrations survive a restart, so waiting for them would reconcile
+        // before any participant is reachable and mark recoverable reservations
+        // indeterminate. Wait for a live channel instead, and give up only when
+        // the bounded budget is spent.
+        const std::vector<SiteId> attached = coordinator.attached_sites();
         bool all_present = true;
         for (const ReservationRecord& record : open_records) {
           for (const SiteCommitment& site : record.sites) {
             bool found = false;
-            for (const SiteRegistration& candidate : attached) {
-              if (candidate.site_id == site.site_id) found = true;
+            for (const SiteId& candidate : attached) {
+              if (candidate == site.site_id) found = true;
             }
             if (!found) all_present = false;
           }

@@ -152,7 +152,39 @@ void Cluster::await_file(const std::filesystem::path& marker, const std::string&
 }
 
 void Cluster::await_registered(const std::string& site, std::size_t expected_occurrences) {
+  // Records when each child's log grew, so a slow reconnection can be attributed
+  // to a specific process instead of guessed at.
+  struct Timeline {
+    std::string label;
+    std::size_t size = 0;
+    long long first_ms = -1;
+    long long last_ms = -1;
+    int changes = 0;
+  };
+  std::vector<Timeline> timelines;
+  for (const auto& managed : children_) {
+    Timeline entry;
+    entry.label = managed->label;
+    std::error_code error;
+    entry.size = static_cast<std::size_t>(std::filesystem::file_size(managed->stderr_path, error));
+    timelines.push_back(entry);
+  }
+  const auto started = std::chrono::steady_clock::now();
   for (int attempt = 0; attempt < kReadyAttempts; ++attempt) {
+    for (std::size_t index = 0; index < children_.size(); ++index) {
+      std::error_code error;
+      const auto size =
+          static_cast<std::size_t>(std::filesystem::file_size(children_[index]->stderr_path, error));
+      if (!error && size != timelines[index].size) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - started)
+                                 .count();
+        if (timelines[index].first_ms < 0) timelines[index].first_ms = elapsed;
+        timelines[index].last_ms = elapsed;
+        ++timelines[index].changes;
+        timelines[index].size = size;
+      }
+    }
     if (count_occurrences(stderr_of("coordinator"), "site " + site + " registered") >=
         expected_occurrences) {
       return;
@@ -160,6 +192,11 @@ void Cluster::await_registered(const std::string& site, std::size_t expected_occ
     std::this_thread::sleep_for(std::chrono::milliseconds(kReadyIntervalMs));
   }
   std::string detail = "participant " + site + " never re-registered";
+  for (const Timeline& entry : timelines) {
+    detail += "\n  timeline [" + entry.label + "] changes=" + std::to_string(entry.changes) +
+              " first_growth=+" + std::to_string(entry.first_ms) + "ms last_growth=+" +
+              std::to_string(entry.last_ms) + "ms size=" + std::to_string(entry.size);
+  }
   for (const auto& managed : children_) {
     std::error_code error;
     const auto size = std::filesystem::file_size(managed->stderr_path, error);

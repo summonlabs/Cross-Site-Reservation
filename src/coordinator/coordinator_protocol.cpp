@@ -882,6 +882,18 @@ Result<SweepResult> Coordinator::expire(const ExpireCommand& command) {
 }
 
 Result<SweepResult> Coordinator::reconcile_record(const ReservationId& reservation, Generation generation) {
+  // Sweeps are serialized per reservation, and the snapshot below is taken after
+  // this claim. Two passes therefore cannot interleave on one record, which is
+  // what would otherwise let a pass that started earlier overwrite the decision a
+  // later pass already made.
+  const std::string claim_key = "res:" + reservation.hex();
+  claim_in_flight(claim_key);
+  struct ClaimGuard {
+    Coordinator* self;
+    std::string key;
+    ~ClaimGuard() { self->release_in_flight(key); }
+  } claim{this, claim_key};
+
   ReservationRecord record;
   {
     std::lock_guard<std::mutex> guard(core_mutex_);
@@ -895,6 +907,7 @@ Result<SweepResult> Coordinator::reconcile_record(const ReservationId& reservati
     ++result.unchanged;
     return result;
   }
+  const ReservationStage snapshot_stage = record.stage;
   bool any_committed = false;
   bool any_unknown = false;
   for (std::size_t index = 0; index < record.sites.size(); ++index) {
@@ -938,6 +951,10 @@ Result<SweepResult> Coordinator::reconcile_record(const ReservationId& reservati
       record.stage = ReservationStage::indeterminate;
       record.terminal_reason = "reconciliation could not reach every participant";
       std::lock_guard<std::mutex> guard(core_mutex_);
+      if (!stage_matches_locked(record.id, record.generation, snapshot_stage)) {
+        ++result.unchanged;
+        return result;
+      }
       record.evidence_digest = record.compute_evidence_digest();
       XSR_RETURN_IF_ERROR(persist_locked(record, RecordKind::reservation_indeterminate));
       records_[ledger_key(record.id, record.generation)] = record;
@@ -963,6 +980,10 @@ Result<SweepResult> Coordinator::reconcile_record(const ReservationId& reservati
     record.stage = ReservationStage::indeterminate;
     record.terminal_reason = "reconciliation could not complete the commit: " + forwarded.error().to_string();
     std::lock_guard<std::mutex> guard(core_mutex_);
+    if (!stage_matches_locked(record.id, record.generation, snapshot_stage)) {
+      ++result.unchanged;
+      return result;
+    }
     record.evidence_digest = record.compute_evidence_digest();
     XSR_RETURN_IF_ERROR(persist_locked(record, RecordKind::reservation_indeterminate));
     records_[ledger_key(record.id, record.generation)] = record;
