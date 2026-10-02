@@ -46,12 +46,15 @@ function(xsr_strict_warnings target)
 endfunction()
 
 function(xsr_sanitizers target)
+  # PUBLIC rather than PRIVATE: a sanitized static library requires the final
+  # executable to compile and link the same runtime, and that must hold for a
+  # downstream consumer of the installed package as well.
   if(XSR_ENABLE_SANITIZERS)
     if(MSVC)
-      target_compile_options(${target} PRIVATE /fsanitize=address)
+      target_compile_options(${target} PUBLIC /fsanitize=address)
     else()
-      target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
-      target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+      target_compile_options(${target} PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+      target_link_options(${target} PUBLIC -fsanitize=address,undefined)
     endif()
   endif()
 endfunction()

@@ -159,14 +159,12 @@ class RecordStore {
   Status open_log_locked(bool create);
 
   mutable std::mutex mutex_;
-  std::filesystem::path directory_;
   std::filesystem::path log_path_;
   std::filesystem::path snapshot_path_;
   std::FILE* log_ = nullptr;
   std::uint64_t last_sequence_ = 0;
   std::uint64_t next_sequence_ = 1;
   std::uint64_t log_bytes_ = 0;
-  std::uint64_t committed_bytes_ = 0;
   std::uint64_t snapshot_sequence_ = 0;
   std::uint64_t snapshot_bytes_ = 0;
   std::uint64_t torn_tail_bytes_at_open_ = 0;

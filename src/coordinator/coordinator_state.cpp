@@ -20,7 +20,6 @@ Coordinator::~Coordinator() = default;
 
 Coordinator::Coordinator(Coordinator&& other) noexcept {
   std::lock_guard<std::mutex> guard(other.core_mutex_);
-  directory_ = std::move(other.directory_);
   store_ = std::move(other.store_);
   clock_ = other.clock_;
   options_ = other.options_;
@@ -42,7 +41,6 @@ Coordinator::Coordinator(Coordinator&& other) noexcept {
 Coordinator& Coordinator::operator=(Coordinator&& other) noexcept {
   if (this == &other) return *this;
   std::scoped_lock guard(core_mutex_, other.core_mutex_);
-  directory_ = std::move(other.directory_);
   store_ = std::move(other.store_);
   clock_ = other.clock_;
   options_ = other.options_;
@@ -73,7 +71,6 @@ Result<Coordinator> Coordinator::open(const CoordinatorOptions& options, const C
   if (!store.ok()) return store.error();
 
   Coordinator coordinator;
-  coordinator.directory_ = options.state_directory;
   coordinator.store_ = std::move(store).value();
   coordinator.clock_ = &clock;
   coordinator.options_ = options;

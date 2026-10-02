@@ -522,14 +522,12 @@ RecordStore::~RecordStore() {
 
 RecordStore::RecordStore(RecordStore&& other) noexcept {
   std::lock_guard<std::mutex> guard(other.mutex_);
-  directory_ = std::move(other.directory_);
   log_path_ = std::move(other.log_path_);
   snapshot_path_ = std::move(other.snapshot_path_);
   log_ = other.log_;
   last_sequence_ = other.last_sequence_;
   next_sequence_ = other.next_sequence_;
   log_bytes_ = other.log_bytes_;
-  committed_bytes_ = other.committed_bytes_;
   snapshot_sequence_ = other.snapshot_sequence_;
   snapshot_bytes_ = other.snapshot_bytes_;
   has_snapshot_ = other.has_snapshot_;
@@ -545,14 +543,12 @@ RecordStore& RecordStore::operator=(RecordStore&& other) noexcept {
     log_ = nullptr;
   }
   std::scoped_lock guard(mutex_, other.mutex_);
-  directory_ = std::move(other.directory_);
   log_path_ = std::move(other.log_path_);
   snapshot_path_ = std::move(other.snapshot_path_);
   log_ = other.log_;
   last_sequence_ = other.last_sequence_;
   next_sequence_ = other.next_sequence_;
   log_bytes_ = other.log_bytes_;
-  committed_bytes_ = other.committed_bytes_;
   snapshot_sequence_ = other.snapshot_sequence_;
   snapshot_bytes_ = other.snapshot_bytes_;
   has_snapshot_ = other.has_snapshot_;
@@ -580,7 +576,6 @@ Result<RecordStore> RecordStore::open(const std::filesystem::path& directory, st
   XSR_RETURN_IF_ERROR(platform::ensure_directory(directory));
 
   RecordStore store;
-  store.directory_ = directory;
   store.log_path_ = log_path_for(directory, name);
   store.snapshot_path_ = snapshot_path_for(directory, name);
 
@@ -634,7 +629,6 @@ Result<RecordStore> RecordStore::open(const std::filesystem::path& directory, st
   auto size = stream_size(file);
   if (!size.ok()) return size.error();
   store.log_bytes_ = size.value();
-  store.committed_bytes_ = store.log_bytes_;
   store.torn_tail_bytes_at_open_ = outcome.torn_tail_bytes;
   store.dirty_ = false;
   if (store.has_snapshot_ && store.log_bytes_ < store_format::log_header_size) {
@@ -707,7 +701,6 @@ Status RecordStore::commit() {
 Status RecordStore::flush_locked() {
   if (!dirty_) return ok_status();
   XSR_RETURN_IF_ERROR(stream_sync(log_));
-  committed_bytes_ = log_bytes_;
   dirty_ = false;
   return ok_status();
 }
@@ -762,7 +755,6 @@ Status RecordStore::compact(std::string_view snapshot_payload) {
   snapshot_bytes_ = store_format::snapshot_header_size + snapshot_payload.size();
   next_sequence_ = last_sequence_ + 1;
   log_bytes_ = image_bytes;
-  committed_bytes_ = log_bytes_;
   dirty_ = false;
   return ok_status();
 }

@@ -11,7 +11,12 @@
 namespace xsr {
 
 /// Signed 64-bit addition that refuses overflow instead of wrapping.
-inline Result<std::int64_t> add_checked(std::int64_t a, std::int64_t b) {
+///
+/// Deliberately named differently from the unsigned overload: a pair of
+/// overloads differing only in signedness makes plain literals ambiguous on
+/// LP64 targets, where uint64_t is `unsigned long` and int64_t is `long`, so
+/// both candidates require a conversion.
+inline Result<std::int64_t> add_checked_signed(std::int64_t a, std::int64_t b) {
   if (b > 0 && a > std::numeric_limits<std::int64_t>::max() - b) {
     return make_error(ErrorCode::overflow, "signed addition overflow");
   }

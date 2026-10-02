@@ -395,7 +395,6 @@ SiteLedger::~SiteLedger() = default;
 
 SiteLedger::SiteLedger(SiteLedger&& other) noexcept {
   std::lock_guard<std::mutex> guard(other.mutex_);
-  directory_ = std::move(other.directory_);
   store_ = std::move(other.store_);
   config_ = std::move(other.config_);
   clock_ = other.clock_;
@@ -416,7 +415,6 @@ SiteLedger::SiteLedger(SiteLedger&& other) noexcept {
 SiteLedger& SiteLedger::operator=(SiteLedger&& other) noexcept {
   if (this == &other) return *this;
   std::scoped_lock guard(mutex_, other.mutex_);
-  directory_ = std::move(other.directory_);
   store_ = std::move(other.store_);
   config_ = std::move(other.config_);
   clock_ = other.clock_;
@@ -1409,7 +1407,6 @@ Result<SiteLedger> SiteLedger::open(const std::filesystem::path& directory, cons
   if (!store.ok()) return store.error();
 
   SiteLedger ledger;
-  ledger.directory_ = directory;
   ledger.store_ = std::move(store).value();
   ledger.clock_ = &clock;
   ledger.config_.site_id = config.site_id;

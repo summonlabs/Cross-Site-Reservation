@@ -25,8 +25,10 @@ jobs:
         build_type: [Debug, Release]
     steps:
       - uses: actions/checkout@v4
+      # The Visual Studio generator is deliberately not pinned: the runner image
+      # moves between VS releases, and CMake selects the newest installed one.
       - name: Configure
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DXSR_WARNINGS_AS_ERRORS=ON -DXSR_BUILD_BENCHMARKS=ON
+        run: cmake -S . -B build -DXSR_WARNINGS_AS_ERRORS=ON -DXSR_BUILD_BENCHMARKS=ON
       - name: Build
         run: cmake --build build --config ${{ matrix.build_type }} --parallel
       - name: Test
@@ -48,6 +50,11 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DXSR_WARNINGS_AS_ERRORS=ON -DXSR_BUILD_BENCHMARKS=ON
       - name: Build
         run: cmake --build build --parallel
+      - name: TEMP diagnostics (list every compile error)
+        if: always()
+        run: |
+          cmake --build build -- -k 2>&1 | grep -E "error:" | sort -u | head -100 || true
+
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
@@ -67,6 +74,11 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DXSR_WARNINGS_AS_ERRORS=ON
       - name: Build
         run: cmake --build build --parallel
+      - name: TEMP diagnostics (list every compile error)
+        if: always()
+        run: |
+          cmake --build build -- -k 2>&1 | grep -E "error:" | sort -u | head -100 || true
+
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
@@ -84,5 +96,10 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DXSR_ENABLE_SANITIZERS=ON -DXSR_WARNINGS_AS_ERRORS=ON
       - name: Build
         run: cmake --build build --parallel
+      - name: TEMP diagnostics (list every compile error)
+        if: always()
+        run: |
+          cmake --build build -- -k 2>&1 | grep -E "error:" | sort -u | head -100 || true
+
       - name: Test
         run: ctest --test-dir build --output-on-failure

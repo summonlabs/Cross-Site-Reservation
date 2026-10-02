@@ -22,6 +22,7 @@ inline bool connection_lost(int error) {
 }
 #else
 #include <arpa/inet.h>
+#include <csignal>
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -39,14 +40,28 @@ inline bool connection_lost(int error) {
   return error == ECONNRESET || error == ECONNABORTED || error == ENOTCONN || error == EPIPE ||
          error == ESHUTDOWN;
 }
+
 #endif
 
 namespace xsr::platform {
 namespace {
 
+/// A write to a peer that has already closed must never terminate the process,
+/// so the send path asks for MSG_NOSIGNAL where the platform offers it. The flag
+/// does not exist on Windows, where a failed send simply returns an error.
+constexpr int send_flags() noexcept {
+#if defined(MSG_NOSIGNAL)
+  return MSG_NOSIGNAL;
+#else
+  return 0;
+#endif
+}
+
 #if defined(_WIN32)
 std::once_flag g_wsa_once;
 int g_wsa_result = 0;
+#else
+std::once_flag g_sigpipe_once;
 #endif
 
 /// Closes a raw handle without touching RAII state.
@@ -118,6 +133,10 @@ Status initialize_networking() {
   if (g_wsa_result != 0) {
     return make_error(ErrorCode::io_error, "WSAStartup failed", std::to_string(g_wsa_result));
   }
+#else
+  // Without this, writing to a closed participant would raise SIGPIPE and kill
+  // the process instead of surfacing the transport failure to the caller.
+  std::call_once(g_sigpipe_once, []() { ::signal(SIGPIPE, SIG_IGN); });
 #endif
   return ok_status();
 }
@@ -243,7 +262,7 @@ Status Socket::write_all(std::span<const std::uint8_t> bytes) {
   while (offset < bytes.size()) {
     const int sent = ::send(static_cast<socket_handle>(handle_),
                             reinterpret_cast<const char*>(bytes.data() + offset),
-                            static_cast<int>(bytes.size() - offset), 0);
+                            static_cast<int>(bytes.size() - offset), send_flags());
     if (sent < 0) {
       const int error = last_socket_error();
       if (interrupted(error)) continue;

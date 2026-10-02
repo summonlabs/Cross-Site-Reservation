@@ -159,7 +159,6 @@ class Coordinator {
   mutable std::mutex core_mutex_;
   std::condition_variable core_cv_;
   std::unordered_set<std::string> in_flight_;
-  std::filesystem::path directory_;
   RecordStore store_;
   const Clock* clock_ = nullptr;
   CoordinatorOptions options_;

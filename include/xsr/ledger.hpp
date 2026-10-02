@@ -250,7 +250,6 @@ class SiteLedger {
   Status apply_config_record(const SiteConfig& config);
 
   mutable std::mutex mutex_;
-  std::filesystem::path directory_;
   RecordStore store_;
   SiteConfig config_;
   const Clock* clock_ = nullptr;

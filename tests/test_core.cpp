@@ -244,13 +244,15 @@ XSR_TEST(capacity, canonical_ordering_and_arithmetic) {
 }
 
 XSR_TEST(checked, arithmetic_refuses_overflow) {
-  XSR_CHECK_EQ(XSR_TAKE(add_checked(1ull, 2ull)), 3ull);
-  XSR_CHECK_ERR(add_checked(UINT64_MAX, 1ull), ErrorCode::overflow);
-  XSR_CHECK_ERR(sub_checked(1ull, 2ull), ErrorCode::underflow);
-  XSR_CHECK_ERR(mul_checked(UINT64_MAX, 2ull), ErrorCode::overflow);
-  XSR_CHECK_EQ(XSR_TAKE(mul_checked(0ull, UINT64_MAX)), 0ull);
-  XSR_CHECK_ERR(add_checked(std::numeric_limits<std::int64_t>::max(), 1), ErrorCode::overflow);
-  XSR_CHECK_ERR(add_checked(std::numeric_limits<std::int64_t>::min(), -1), ErrorCode::overflow);
+  constexpr std::uint64_t kOne = 1;
+  constexpr std::uint64_t kTwo = 2;
+  XSR_CHECK_EQ(XSR_TAKE(add_checked(kOne, kTwo)), 3ull);
+  XSR_CHECK_ERR(add_checked(std::numeric_limits<std::uint64_t>::max(), kOne), ErrorCode::overflow);
+  XSR_CHECK_ERR(sub_checked(kOne, kTwo), ErrorCode::underflow);
+  XSR_CHECK_ERR(mul_checked(std::numeric_limits<std::uint64_t>::max(), kTwo), ErrorCode::overflow);
+  XSR_CHECK_EQ(XSR_TAKE(mul_checked(kOne * 0, std::numeric_limits<std::uint64_t>::max())), 0ull);
+  XSR_CHECK_ERR(add_checked_signed(std::numeric_limits<std::int64_t>::max(), 1), ErrorCode::overflow);
+  XSR_CHECK_ERR(add_checked_signed(std::numeric_limits<std::int64_t>::min(), -1), ErrorCode::overflow);
   if constexpr (sizeof(std::size_t) < sizeof(std::uint64_t)) {
     XSR_CHECK_ERR(to_size(std::numeric_limits<std::uint64_t>::max()), ErrorCode::out_of_range);
   } else {
