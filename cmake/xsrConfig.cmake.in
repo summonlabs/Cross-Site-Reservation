@@ -1,0 +1,12 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+
+# The exported target names the Windows system libraries it needs (ws2_32,
+# bcrypt) as plain link entries, which both MSVC and MinGW resolve directly.
+# They are deliberately not turned into imported targets: a self-referencing
+# imported interface library would silently resolve to nothing at link time.
+include("${CMAKE_CURRENT_LIST_DIR}/xsrTargets.cmake")
+
+check_required_components(xsr)

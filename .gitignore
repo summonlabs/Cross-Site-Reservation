@@ -1,0 +1,83 @@
+# Build trees
+build/
+out/
+cmake-build-*
+
+# CMake output
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+*.cmake.user
+install_manifest.txt
+compile_commands.json
+.ninja_deps
+.ninja_log
+*.ninja
+Makefile
+CMakeUserPresets.json
+_deps/
+
+# Visual Studio and compiler output
+*.sln
+*.vcxproj
+*.vcxproj.user
+*.vcxproj.filters
+.vs/
+*.pdb
+*.ilk
+*.idb
+*.exp
+*.lib
+*.obj
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.exe
+*.dll
+*.dSYM/
+
+# Editor and operating system noise
+.vscode/
+.idea/
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Runtime state written by tests
+xsr-state/
+*.xsrlog
+*.xsrsnap
+*.tmp
+
+# Crash dumps. The root-only "/core" form matters: an unanchored "core" also
+# matches source directories such as src/core.
+*.dmp
+/core
+core.[0-9]*
+
+# Tracked by design. These negations keep an artifact pattern above
+# (for example core.*) from ever capturing source or documentation.
+!.github/
+!CMakeLists.txt
+!*.cpp
+!*.cc
+!*.cxx
+!*.hpp
+!*.hh
+!*.hxx
+!*.h
+!*.md
+!LICENSE
+!NOTICE
+!README.md
+!CONTRIBUTING.md
+!docs/
+!tests/
+!benchmarks/

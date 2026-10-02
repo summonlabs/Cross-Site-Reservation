@@ -1,0 +1,27 @@
+# Default: text files are stored with LF and checked out with LF on every platform.
+* text=auto eol=lf
+
+# License, notice, and documentation are text with LF endings.
+LICENSE text eol=lf
+NOTICE text eol=lf
+README.md text eol=lf
+CONTRIBUTING.md text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+
+# Binary formats: no text conversion, no diffs, no merges.
+*.png binary -text
+*.jpg binary -text
+*.jpeg binary -text
+*.gif binary -text
+*.bmp binary -text
+*.ico binary -text
+*.webp binary -text
+*.pdf binary -text
+*.zip binary -text
+*.gz binary -text
+*.7z binary -text
+*.ttf binary -text
+*.otf binary -text
+*.woff binary -text
+*.woff2 binary -text
