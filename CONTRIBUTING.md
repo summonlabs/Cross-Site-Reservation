@@ -65,9 +65,6 @@ Before opening a pull request:
 - Run the full CTest suite against your change. Do not run a subset and assume the
   rest passes.
 - Do not disable, skip, delete, or weaken a test to make a build or a run pass.
-- Do not add test timeouts, watchdogs, or kill timers. A hanging test is a defect in
-  the code under test or in the test itself; find and fix the defect instead of
-  bounding it with a timer.
 - Leave the build warning-clean on every platform the project supports.
 
 ## Code quality
