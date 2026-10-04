@@ -1,6 +1,6 @@
 # Cross-Site Reservation
 
-Cross-Site Reservation is the DCCP boundary that turns an accepted multi-site plan or capacity
+Cross-Site Reservation turns an accepted multi-site plan or capacity
 decision into enforceable, generation-bound facility-capacity commitments across autonomous sites.
 It answers one question: **how can capacity be committed across independent sites without double
 allocation, partial invisible success, stale authority, or ambiguity after a crash or partition?**
