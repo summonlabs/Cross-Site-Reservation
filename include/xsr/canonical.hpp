@@ -36,11 +36,26 @@ bool is_canonical_escaped(std::string_view text, std::size_t max_length = limits
 /// True when the text is a well-formed field name.
 bool is_canonical_name(std::string_view name);
 
+/// Field, byte and value budgets of one canonical document. The defaults are the
+/// budgets of a single record or message. A snapshot image nests one block per
+/// record it holds, so it states its own budget: see snapshot_budget().
+struct CanonicalBudget {
+  std::size_t max_fields = limits::max_canonical_fields;
+  std::size_t max_bytes = limits::max_canonical_bytes;
+  std::size_t max_value_length = limits::max_canonical_value_length;
+};
+
+/// The budget of a snapshot image that holds up to \p max_records nested records:
+/// one field for each record besides the fixed ones, as many bytes as a snapshot
+/// payload may hold, and a value as long as one whole record may be.
+CanonicalBudget snapshot_budget(std::size_t max_records) noexcept;
+
 /// Streaming canonical writer. Field order is caller-controlled and must be
 /// identical for equal values. Failures are sticky and reported by finish().
 class CanonicalWriter {
  public:
   CanonicalWriter() = default;
+  explicit CanonicalWriter(const CanonicalBudget& budget) : budget_(budget) {}
 
   void put(std::string_view name, std::string_view value);
   void put_u64(std::string_view name, std::uint64_t value);
@@ -66,6 +81,7 @@ class CanonicalWriter {
  private:
   void fail(ErrorCode code, std::string message);
 
+  CanonicalBudget budget_;
   std::string buf_;
   std::size_t fields_ = 0;
   bool failed_ = false;
@@ -82,6 +98,8 @@ class CanonicalReader {
 
   static Result<CanonicalReader> parse(std::span<const std::uint8_t> data);
   static Result<CanonicalReader> parse(std::string_view data);
+  /// Parses under an explicit budget instead of the budget of a single record.
+  static Result<CanonicalReader> parse(std::string_view data, const CanonicalBudget& budget);
 
   /// Next field must be named \p name.
   Result<std::string> take(std::string_view name);

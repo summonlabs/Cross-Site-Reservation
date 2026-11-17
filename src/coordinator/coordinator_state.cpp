@@ -120,6 +120,16 @@ Status Coordinator::persist_raw_locked(RecordKind kind, std::string_view payload
   if (poisoned_) {
     return make_error(ErrorCode::invalid_state, "coordinator is poisoned after a failed journal write");
   }
+  // Compaction runs here, before the new record is appended, and never after it.
+  // Every caller applies a record to memory only once this function has returned, so
+  // a snapshot taken after the append was an image without the record that had just
+  // been made durable, stamped as covering it: the journal was then cut, and a restart
+  // came back without the newest transition. Here memory and journal agree. A
+  // compaction that fails leaves the journal as it was, so it does not fail a write.
+  {
+    const Status compacted = maybe_compact_locked();
+    (void)compacted;
+  }
   fault::point("coordinator.before-append");
   Status appended = store_.append(kind, payload);
   if (!appended.ok()) {
@@ -132,7 +142,7 @@ Status Coordinator::persist_raw_locked(RecordKind kind, std::string_view payload
     return committed.error();
   }
   fault::point(std::string("coordinator.after-commit.") + to_string(kind));
-  return maybe_compact_locked();
+  return ok_status();
 }
 
 Status Coordinator::maybe_compact_locked() {
@@ -244,7 +254,10 @@ Status Coordinator::apply_snapshot_bytes(const std::string& image) {
   idempotency_.clear();
   sites_.clear();
   config_recorded_ = false;
-  auto reader = CanonicalReader::parse(image);
+  // A snapshot holds every reservation, each as one nested record, so it is read
+  // under the snapshot budget. Under the budget of a single record it could hold
+  // about five hundred reservations, and none longer than one field value.
+  auto reader = CanonicalReader::parse(image, snapshot_budget(limits::max_reservations));
   if (!reader.ok()) return reader.error();
   auto format = reader.value().take("format");
   if (!format.ok()) return format.error();
@@ -287,7 +300,7 @@ Status Coordinator::apply_snapshot_bytes(const std::string& image) {
   }
   for (std::uint64_t index = 0; index < reservation_count.value(); ++index) {
     const std::string field = reservation_field(static_cast<std::size_t>(index));
-    auto block = reader.value().take_block(field, limits::max_canonical_value_length);
+    auto block = reader.value().take_block(field, limits::max_canonical_bytes);
     if (!block.ok()) return block.error();
     auto record_reader = CanonicalReader::parse(block.value());
     if (!record_reader.ok()) return record_reader.error();
@@ -331,7 +344,7 @@ std::string Coordinator::snapshot_image_locked() const {
   std::sort(registrations.begin(), registrations.end(),
             [](const SiteRegistration* a, const SiteRegistration* b) { return a->site_id < b->site_id; });
 
-  CanonicalWriter writer;
+  CanonicalWriter writer(snapshot_budget(limits::max_reservations));
   writer.put("format", kSnapshotFormat);
   {
     CanonicalWriter config_writer;

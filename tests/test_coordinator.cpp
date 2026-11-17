@@ -511,3 +511,115 @@ XSR_TEST(coordinator, concurrent_duplicate_reserve_returns_one_reservation) {
   XSR_CHECK_EQ(coordinator.reservations().size(), std::size_t{1});
   fixture.check_accounting(coordinator);
 }
+
+XSR_TEST(coordinator, automatic_compaction_keeps_the_transition_that_triggered_it) {
+  Fixture fixture;
+  fixture.add_site("s1");
+  fixture.add_site("s2");
+  // A threshold of one byte makes every journal write trigger a compaction, so each
+  // stage of the protocol is the newest record at the moment a snapshot is taken.
+  const auto open_compacting = [&fixture]() {
+    CoordinatorOptions options = fixture.options();
+    options.compaction_threshold_bytes = 1;
+    Coordinator coordinator = XSR_TAKE(Coordinator::open(options, fixture.clock));
+    for (std::size_t index = 0; index < fixture.ledgers.size(); ++index) {
+      XSR_CHECK_OK(coordinator.register_site(fixture.registration_for(index), fixture.channels[index]));
+    }
+    return coordinator;
+  };
+  ReservationId reservation;
+  Generation generation;
+  Digest final_receipt;
+  {
+    Coordinator coordinator = open_compacting();
+    auto response = coordinator.reserve(request_for("key-auto", {{"s1", 1}, {"s2", 1}}, "cpu=4", 600000));
+    XSR_CHECK_OK(response);
+    reservation = response.value().reservation;
+    final_receipt = response.value().final_commit_receipt;
+  }
+  {
+    // The caller was told the reservation is active. A restart must find it so.
+    Coordinator reopened = open_compacting();
+    auto record = reopened.status(reservation);
+    XSR_CHECK_OK(record);
+    XSR_CHECK_EQ(record.value().stage, ReservationStage::active);
+    XSR_CHECK_EQ(record.value().final_commit_receipt, final_receipt);
+    generation = record.value().generation;
+    fixture.check_accounting(reopened);
+
+    CommandRequest command;
+    command.reservation = reservation;
+    command.generation = generation;
+    command.idempotency_key = XSR_TAKE(IdempotencyKey::parse("key-auto-release"));
+    command.reason = "validation";
+    XSR_CHECK_OK(reopened.release(command));
+  }
+  // The release was the newest record when its compaction ran, and it survives too.
+  Coordinator last = open_compacting();
+  auto record = last.status(reservation, generation);
+  XSR_CHECK_OK(record);
+  XSR_CHECK_EQ(record.value().stage, ReservationStage::released);
+  fixture.check_accounting(last);
+}
+
+XSR_TEST(coordinator, compaction_holds_more_reservations_than_one_record_has_fields) {
+  Fixture fixture;
+  // The site offers two cores and every request asks for four, so each reservation
+  // fails closed and is recorded as aborted without costing the site a journal write.
+  fixture.add_site("s1", "cpu=2,mem=4", "cpu=1,mem=1");
+  const std::size_t count = 520;
+  {
+    Coordinator coordinator = fixture.open_coordinator();
+    for (std::size_t index = 0; index < count; ++index) {
+      auto response = coordinator.reserve(
+          request_for("many-" + std::to_string(index), {{"s1", 1}}, "cpu=4,mem=8", 600000));
+      XSR_CHECK_ERR(response, ErrorCode::capacity_exhausted);
+    }
+    XSR_CHECK_EQ(coordinator.reservations().size(), count);
+    // A snapshot is one image of every reservation the coordinator holds, and the
+    // coordinator may hold far more of them than a single record has fields.
+    XSR_CHECK_OK(coordinator.compact());
+  }
+  Coordinator reopened = fixture.open_coordinator();
+  XSR_CHECK_EQ(reopened.open_report().has_snapshot, true);
+  const auto reservations = reopened.reservations();
+  XSR_CHECK_EQ(reservations.size(), count);
+  for (const ReservationRecord& record : reservations) {
+    XSR_CHECK_EQ(record.stage, ReservationStage::aborted);
+  }
+  fixture.check_accounting(reopened);
+}
+
+XSR_TEST(coordinator, a_snapshot_holds_any_record_the_journal_accepted) {
+  Fixture fixture;
+  fixture.add_site("s1");
+  ReservationId reservation;
+  Generation generation;
+  // A reason is free text. This one is within what one field may hold, and escaped it
+  // makes the whole record longer than a single field value.
+  const std::string reason(25000, ' ');
+  {
+    Coordinator coordinator = fixture.open_coordinator();
+    auto response = coordinator.reserve(request_for("key-long", {{"s1", 1}}, "cpu=4", 600000));
+    XSR_CHECK_OK(response);
+    reservation = response.value().reservation;
+    auto record = coordinator.status(reservation);
+    XSR_CHECK_OK(record);
+    generation = record.value().generation;
+    CommandRequest command;
+    command.reservation = reservation;
+    command.generation = generation;
+    command.idempotency_key = XSR_TAKE(IdempotencyKey::parse("key-long-release"));
+    command.reason = reason;
+    XSR_CHECK_OK(coordinator.release(command));
+    XSR_CHECK_OK(coordinator.compact());
+  }
+  // The journal accepted the record, so the snapshot that replaces the journal has to
+  // be one the coordinator can read back.
+  Coordinator reopened = fixture.open_coordinator();
+  auto record = reopened.status(reservation, generation);
+  XSR_CHECK_OK(record);
+  XSR_CHECK_EQ(record.value().stage, ReservationStage::released);
+  XSR_CHECK_EQ(record.value().terminal_reason, reason);
+  fixture.check_accounting(reopened);
+}

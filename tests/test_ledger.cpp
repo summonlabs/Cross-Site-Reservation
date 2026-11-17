@@ -1,4 +1,7 @@
 // Copyright 2026 Summon Software Labs. Licensed under the Apache License, Version 2.0.
+#include <cstdint>
+#include <cstdio>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -542,4 +545,97 @@ XSR_TEST(ledger, generation_fence_blocks_older_generations) {
   XSR_CHECK_ERR(ledger.commit(commit_request(prepare_request(reservation_id(140), "cpu=1", 2))),
                 ErrorCode::stale_generation);
   XSR_CHECK_OK(ledger.verify());
+}
+
+XSR_TEST(ledger, compaction_holds_more_entries_than_one_record_has_fields) {
+  Fixture fixture;
+  const SiteConfig config = fixture.config("s1", "cpu=100000,mem=100000", "cpu=8,mem=16");
+  const std::size_t count = 600;
+  {
+    SiteLedger ledger = fixture.open(config);
+    for (std::size_t index = 0; index < count; ++index) {
+      ReservationId id;
+      id.bytes[0] = static_cast<std::uint8_t>((index + 1) & 0xFFu);
+      id.bytes[1] = static_cast<std::uint8_t>(((index + 1) >> 8) & 0xFFu);
+      id.bytes[2] = 0x5A;
+      XSR_CHECK_OK(ledger.prepare(prepare_request(id, "cpu=1,mem=1")));
+    }
+    // A snapshot is one image of every entry, and the ledger may hold far more entries
+    // than a single record has fields.
+    XSR_CHECK_OK(ledger.compact());
+    XSR_CHECK_OK(ledger.close());
+  }
+  SiteLedger reopened = fixture.open(config);
+  XSR_CHECK_EQ(reopened.open_report().has_snapshot, true);
+  XSR_CHECK_EQ(reopened.entries().size(), count);
+  XSR_CHECK_OK(reopened.verify());
+  auto accounting = reopened.accounting();
+  XSR_CHECK_OK(accounting);
+  XSR_CHECK_EQ(accounting.value().held.to_string(), std::string("cpu=600,mem=600"));
+}
+
+XSR_TEST(ledger, a_transfer_torn_between_its_two_records_keeps_the_commitment) {
+  Fixture fixture;
+  const SiteConfig config = fixture.config();
+  const PrepareRequest prepare = prepare_request(reservation_id(120));
+  TransferRequest transfer;
+  {
+    SiteLedger ledger = fixture.open(config);
+    const StageReceipt committed = drive_to_commit(ledger, prepare);
+    transfer.reservation = prepare.reservation;
+    transfer.from_generation = Generation{1};
+    transfer.to_generation = Generation{2};
+    transfer.amount = prepare.amount;
+    transfer.expiry = Timestamp{1700000000000 + 900000};
+    transfer.request_digest = Digest::of(std::string("transfer-torn"));
+    transfer.predecessor_receipt = committed.receipt;
+    transfer.idempotency_key = XSR_TAKE(IdempotencyKey::parse("transfer-torn"));
+    XSR_CHECK_OK(ledger.transfer(transfer));
+    XSR_CHECK_OK(ledger.close());
+  }
+
+  // A transfer journals two records under one flush: the source generation retired,
+  // then its successor. A crash during that flush can leave the first without the
+  // second, which is what cutting the journal back by its final record leaves here.
+  const auto journal = fixture.root / "s1.xsrlog";
+  std::uint64_t last_record = 0;
+  {
+    std::FILE* file = platform::open_file(journal.string().c_str(), "rb");
+    XSR_CHECK(file != nullptr);
+    std::vector<std::uint8_t> bytes;
+    std::uint8_t chunk[4096];
+    for (;;) {
+      const std::size_t got = std::fread(chunk, 1, sizeof(chunk), file);
+      if (got == 0) break;
+      bytes.insert(bytes.end(), chunk, chunk + got);
+    }
+    std::fclose(file);
+    std::uint64_t offset = store_format::log_header_size;
+    while (offset + store_format::record_header_size <= bytes.size()) {
+      last_record = offset;
+      offset += store_format::record_header_size +
+                store_format::get_u32(bytes, static_cast<std::size_t>(offset));
+    }
+    XSR_CHECK_EQ(offset, static_cast<std::uint64_t>(bytes.size()));
+  }
+  std::filesystem::resize_file(journal, last_record);
+
+  // Nobody was told the transfer had happened, so the commitment is still the source
+  // generation's: it is neither lost nor counted twice.
+  SiteLedger reopened = fixture.open(config);
+  auto predecessor = reopened.entry(prepare.reservation, Generation{1});
+  XSR_CHECK_OK(predecessor);
+  XSR_CHECK_EQ(predecessor.value().state, CommitmentState::committed);
+  auto accounting = reopened.accounting();
+  XSR_CHECK_OK(accounting);
+  XSR_CHECK_EQ(accounting.value().committed.to_string(), std::string("cpu=4,mem=8"));
+  XSR_CHECK_OK(reopened.verify());
+
+  // The transfer can then be carried out.
+  auto again = reopened.transfer(transfer);
+  XSR_CHECK_OK(again);
+  XSR_CHECK_EQ(again.value().generation, Generation{2});
+  auto after = reopened.accounting();
+  XSR_CHECK_OK(after);
+  XSR_CHECK_EQ(after.value().committed.to_string(), std::string("cpu=4,mem=8"));
 }

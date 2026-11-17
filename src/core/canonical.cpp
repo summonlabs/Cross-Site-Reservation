@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <unordered_set>
 
 namespace xsr {
 namespace {
@@ -162,6 +163,14 @@ Result<std::int64_t> parse_i64(std::string_view text) {
   return static_cast<std::int64_t>(value);
 }
 
+CanonicalBudget snapshot_budget(std::size_t max_records) noexcept {
+  CanonicalBudget budget;
+  budget.max_fields = max_records + limits::max_registered_sites + 16;
+  budget.max_bytes = limits::max_snapshot_payload;
+  budget.max_value_length = limits::max_canonical_bytes;
+  return budget;
+}
+
 void CanonicalWriter::fail(ErrorCode code, std::string message) {
   if (!failed_) {
     failed_ = true;
@@ -175,12 +184,12 @@ void CanonicalWriter::put(std::string_view name, std::string_view value) {
     fail(ErrorCode::invalid_argument, "canonical field name is not valid");
     return;
   }
-  if (value.size() > limits::max_canonical_value_length) {
+  if (value.size() > budget_.max_value_length) {
     fail(ErrorCode::too_large, "canonical field value exceeds the allowed length");
     return;
   }
   ++fields_;
-  if (fields_ > limits::max_canonical_fields) {
+  if (fields_ > budget_.max_fields) {
     fail(ErrorCode::too_large, "canonical field budget exceeded");
     return;
   }
@@ -188,7 +197,7 @@ void CanonicalWriter::put(std::string_view name, std::string_view value) {
   buf_.push_back('=');
   buf_.append(canonical_escape(value));
   buf_.push_back('\n');
-  if (buf_.size() > limits::max_canonical_bytes) {
+  if (buf_.size() > budget_.max_bytes) {
     fail(ErrorCode::too_large, "canonical encoding exceeds the total byte budget");
   }
 }
@@ -252,7 +261,7 @@ void CanonicalWriter::put_block(std::string_view name, const std::string& canoni
     return;
   }
   ++fields_;
-  if (fields_ > limits::max_canonical_fields) {
+  if (fields_ > budget_.max_fields) {
     fail(ErrorCode::too_large, "canonical field budget exceeded");
     return;
   }
@@ -260,17 +269,17 @@ void CanonicalWriter::put_block(std::string_view name, const std::string& canoni
   buf_.push_back('=');
   buf_.append(canonical_escape(canonical_block));
   buf_.push_back('\n');
-  if (buf_.size() > limits::max_canonical_bytes) {
+  if (buf_.size() > budget_.max_bytes) {
     fail(ErrorCode::too_large, "canonical encoding exceeds the total byte budget");
   }
 }
 
 Status CanonicalWriter::finish() const {
   if (failed_) return error_;
-  if (fields_ > limits::max_canonical_fields) {
+  if (fields_ > budget_.max_fields) {
     return make_error(ErrorCode::too_large, "canonical field budget exceeded");
   }
-  if (buf_.size() > limits::max_canonical_bytes) {
+  if (buf_.size() > budget_.max_bytes) {
     return make_error(ErrorCode::too_large, "canonical encoding exceeds the total byte budget");
   }
   return ok_status();
@@ -281,10 +290,17 @@ Result<CanonicalReader> CanonicalReader::parse(std::span<const std::uint8_t> dat
 }
 
 Result<CanonicalReader> CanonicalReader::parse(std::string_view data) {
-  if (data.size() > limits::max_canonical_bytes) {
+  return parse(data, CanonicalBudget{});
+}
+
+Result<CanonicalReader> CanonicalReader::parse(std::string_view data, const CanonicalBudget& budget) {
+  if (data.size() > budget.max_bytes) {
     return make_error(ErrorCode::too_large, "canonical input exceeds the total byte budget");
   }
   CanonicalReader reader;
+  // Names seen so far. A snapshot image has one field per record it holds, so a
+  // repeated name is found by lookup rather than by comparing against every field.
+  std::unordered_set<std::string_view> seen;
   std::size_t offset = 0;
   while (offset < data.size()) {
     const std::size_t newline = data.find('\n', offset);
@@ -302,19 +318,17 @@ Result<CanonicalReader> CanonicalReader::parse(std::string_view data) {
     if (!is_canonical_name(name)) {
       return make_error(ErrorCode::invalid_encoding, "canonical field name is not valid");
     }
-    if (!is_canonical_escaped(raw)) {
+    if (!is_canonical_escaped(raw, budget.max_value_length)) {
       return make_error(ErrorCode::invalid_encoding, "canonical field value is not canonical");
     }
-    auto value = canonical_unescape(raw, limits::max_canonical_value_length);
+    auto value = canonical_unescape(raw, budget.max_value_length);
     if (!value.ok()) return value.error();
-    for (const Field& existing : reader.fields_) {
-      if (existing.name == name) {
-        return make_error(ErrorCode::invalid_encoding, "canonical input repeats the field '" +
-                                                           std::string(name) + "'");
-      }
+    if (!seen.insert(name).second) {
+      return make_error(ErrorCode::invalid_encoding, "canonical input repeats the field '" +
+                                                         std::string(name) + "'");
     }
     reader.fields_.push_back(Field{std::string(name), std::move(value).value()});
-    if (reader.fields_.size() > limits::max_canonical_fields) {
+    if (reader.fields_.size() > budget.max_fields) {
       return make_error(ErrorCode::too_large, "canonical field budget exceeded");
     }
   }

@@ -1315,7 +1315,9 @@ Status SiteLedger::apply_record(const Record& record) {
 }
 
 Status SiteLedger::apply_snapshot_bytes(const std::string& image) {
-  auto reader = CanonicalReader::parse(image);
+  // A snapshot holds every entry, each as one nested record, so it is read under the
+  // snapshot budget rather than the budget of a single record.
+  auto reader = CanonicalReader::parse(image, snapshot_budget(limits::max_ledger_entries));
   if (!reader.ok()) return reader.error();
   auto format = reader.value().take("format");
   if (!format.ok()) return format.error();
@@ -1367,7 +1369,7 @@ std::string SiteLedger::snapshot_image_locked() const {
   });
   CanonicalWriter config_writer;
   config_.write_to(config_writer);
-  CanonicalWriter writer;
+  CanonicalWriter writer(snapshot_budget(limits::max_ledger_entries));
   writer.put("format", kSnapshotFormat);
   writer.put_block("config", config_writer.str());
   writer.put_u64("entry_count", ordered.size());
@@ -1436,6 +1438,31 @@ Result<SiteLedger> SiteLedger::open(const std::filesystem::path& directory, cons
   } else if (ledger.config_.digest() != config.digest()) {
     XSR_RETURN_IF_ERROR(ledger.update_capacity(config.offer_generation, config.capacity,
                                                config.protected_headroom, config.policy_generation));
+  }
+  // A transfer journals two records under one flush: the source generation retired,
+  // then its successor holding the commitment. A crash during that flush can leave the
+  // first without the second, and replay then found a commitment that had been given
+  // up and never taken over: the capacity was free again while the reservation was
+  // still live, and the transfer could not be repeated because its source was no
+  // longer committed. A successor is never removed, so a retired generation without
+  // one is exactly that torn transfer. Nobody was told it had happened, and the
+  // commitment is put back where it was.
+  {
+    std::vector<LedgerEntry> torn;
+    for (const auto& pair : ledger.entries_) {
+      const LedgerEntry& entry = pair.second;
+      if (entry.state != CommitmentState::transferred) continue;
+      const auto successor = entry.generation.next();
+      if (!successor.ok()) continue;
+      if (ledger.find(entry.reservation, successor.value()) != nullptr) continue;
+      LedgerEntry restored = entry;
+      restored.state = CommitmentState::committed;
+      torn.push_back(std::move(restored));
+    }
+    for (const LedgerEntry& entry : torn) {
+      XSR_RETURN_IF_ERROR(ledger.persist({{entry, RecordKind::site_commit}}));
+      XSR_RETURN_IF_ERROR(ledger.apply_entry_state(entry));
+    }
   }
   XSR_RETURN_IF_ERROR(ledger.refresh_aggregates());
   XSR_RETURN_IF_ERROR(ledger.verify());
